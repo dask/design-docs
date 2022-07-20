@@ -17,7 +17,7 @@ We propose implementing a `dask` CLI tool that unites the variety of existing CL
 
 ## Motivation
 
-Today we have the follow CLI tools:
+Today we have the following CLI tools:
 
 - Distributed
   - `dask-scheduler` - Starts a scheduler
