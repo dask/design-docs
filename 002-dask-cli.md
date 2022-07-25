@@ -34,7 +34,7 @@ Today we have the follow CLI tools:
 
 This fragmentation leads to user confusion around all of these tools. It also means there are many inconsistencies in how these are implemented. Some use Click for simplified arg parsing, some use Rick for pretty terminal output, etc.
 
-A primary motivation would be to unite everything under one CLI, then a secondary goal would be to improve consistency across tools.
+A primary motivation would be to unite everything under one CLI which would help users more easily discover all the available commands and deepen their understanding of what is possible in terms of cluster management. A secondary goal would be to improve consistency across tools, we seem to be going through a CLI renaissance with libraries like Rich and Textual making it easy to build beautiful and useful CLI tools, so bringing everything under one roof will make it easier to apply these libraries more broadly.
 
 ## Requirements
 
@@ -53,24 +53,24 @@ A primary motivation would be to unite everything under one CLI, then a secondar
 
 Subprojects (including dask/distributed and dask/dask-ctl) can use entrypoints to add to the namespace.
 
-- dask scheduler : we could have a dask command and split out to various subcommands, like conda.  This might make things a bit more extensible.
-- dask worker: alias for `dask-worker`
-- dask cluster list/start/stop/scale : It would be useful to manage long-running clusters from the command line (discussion on this topic on GitHub)
-- dask job submit myscript.py –cluster <CLUSTER_NAME> : submits a script as if it were a function as with `client.submit`; returns a key for a Future that could be used to retrieve STDOUT via - dask job gather ${FUTURE_KEY} –cluster <CLUSTER_NAME>; could also include a –block or (--wait) flag for dask job submit to block and return STDOUT once task completes.
-- dask –version
-- dask info (what does this return?)
-  - –version All of the versions for related libraries
+- `dask scheduler` : we could have a dask command and split out to various subcommands, like conda.  This might make things a bit more extensible.
+- `dask worker`: alias for `dask-worker`
+- `dask cluster list/start/stop/scale` : It would be useful to manage long-running clusters from the command line (discussion on this topic on GitHub)
+- `dask job submit myscript.py –cluster <CLUSTER_NAME>` : submits a script as if it were a function as with `client.submit`; returns a key for a Future that could be used to retrieve STDOUT via - `dask job gather ${FUTURE_KEY} –cluster <CLUSTER_NAME>`; could also include a –block or (--wait) flag for dask job submit to block and return STDOUT once task completes.
+- `dask –version`
+- `dask info` (what does this return?)
+  - `–version` All of the versions for related libraries
     - this should use the `show_versions` function that was added in https://github.com/dask/dask/pull/9144
-  - –config Config that is different from defaults
+  - `–config` Config that is different from defaults
     - And anonymize anything that we shouldn’t send
-- dask gateway/ssh should be able to extend
-- dask worker shell < name>
-- dask worker <name> –keepalive a mechanism for accessing the worker itself after Dask fails. That way you can inspect the state of the worker and try to figure out what went wrong.
-- dask docs opens web browser pointing to docs
+- `dask gateway/ssh` should be able to extend
+- `dask worker shell` < name>
+- `dask worker <name> –keepalive` a mechanism for accessing the worker itself after Dask fails. That way you can inspect the state of the worker and try to figure out what went wrong.
+- `dask docs` opens web browser pointing to docs
 
 ## Backward Compatibility
 
-- All existing tools can still exist with their own commands in addition to being included in the `dask` CLI. But new tools going forwards should only be made via the new CLI.
+- All existing tools can still exist with their own commands in addition to being included in the `dask` CLI. But new tools going forwards should only be made via the new CLI. Existing commands should emit a warning with instructions on the new command to gradually move folks across. This could be part of a deprecation cycle and we could eventually remove the old commands, but there is no urgent need to do so.
 
 ## Alternatives
 
