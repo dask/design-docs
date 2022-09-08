@@ -82,6 +82,12 @@ dask.config.set(backend_options)
 The specific configuration options proposed here are certainly not set in stone.  However, we do feel that the user should have complete control over fallback behavior.  For example, the user should be able to specify if falling back to "numpy"/"pandas" should result in a warning or error message, or if it should be ignored altogether.
 
 
+**Notes on Fall-back Behavior**:
+
+- The proposed design requires every new backend-entrypoint definition (explained below) to define a `fallback` property. The entrypoint must also implement the necessary logic to **move** data from the dedicated fallback library.
+- It should be possible to support multiple fallback options within the external `DaskBackendEntrypoint.fallback` definition. It may make sense to add an official config option for this in Dask (e.g. `"dataframe.backend.fallback-library"`). However, it would need to be the responsibility of the external entrypoint definition to use and validate this field.
+
+
 ### Registering a New Backend (`DaskBackendEntrypoint`)
 
 In order to allow backend registration outside of the Dask source code, we propose that Dask approximately follow [the approach taken by xarray for custom backend interfaces](https://xarray.pydata.org/en/stable/internals/how-to-add-new-backend.html). That is, external libraries should be able to leverage "entrypoints" to tell Dask to register compatible backends in Dask-Array and Dask-DataFrame at run time. To this end, the external library could be expected to define all dispatch IO logic within a `DaskBackendEntrypoint` subclass.  For example, a cudf-based subclass would look something like the `CudfBackendEntrypoint` definition below:
