@@ -48,34 +48,35 @@ Given the motivation for library and hardware agnostic collection APIs, this pro
 
 ### Designating the Backend (`dask.config`)
 
-From the perspective of the typical Dask user, the only visible result of the proposed feature is the addition of new fields in `dask/dask/dask.yaml`/`dask-schema.yaml` (accessiblke from `dask.config`). For each of the targeted collections (Dask-Array and Dask-DataFrame), we propose the addition of "backend", and "backend-options" fields. By default, the "backend" field will be set to "numpy" and "pandas" for Dask-Array and Dask-DataFrame, respectively. However, as shown in the code snippet below, this field can be changed with the existing `dask.config` interface to specify an alternative backend library.
+From the perspective of the typical Dask user, the only visible result of the proposed feature is the addition of new fields in `dask/dask/dask.yaml`/`dask-schema.yaml` (accessible from `dask.config`). For each of the targeted collections (Dask-Array and Dask-DataFrame), we propose the addition of "backend", and "backend-options" fields. By default, the "backend" field will be set to "numpy" and "pandas" for Dask-Array and Dask-DataFrame, respectively. However, as shown in the code snippet below, this field can be changed with the existing `dask.config` interface to specify an alternative backend library.
 
 
 ```python
 import dask
 
-with dask.config.set({"dataframe.backend": "cudf"}):
+with dask.config.set({"dataframe.backend.library": "cudf"}):
     # Produce a cudf-backed collection
     ddf = dask.dataframe.read_parquet("./tmpdir")
 
-with dask.config.set({"array.backend": "cupy"}):
+with dask.config.set({"array.backend.library": "cupy"}):
     # Produce a cupy-backed collection
     darr = dask.array.ones(10, chunks=(5,))
 ```
 
-Since it is unlikely that an alternative backend will support all numpy- or pandas-based data-creation functions available in the collection API, we also propose a "backend-options" field containing "allow-fallback" and "warn-fallback" subfields. When the "allow-fallback" field is set to `True` (default), then the backend's designated fallback class will be used to perform IO, and the result will be moved from the fallback backend. The user should also have the option to enable or disable warnings when this fallback behavior occurs:
+Since it is unlikely that an alternative backend will support all numpy- or pandas-based data-creation functions available in the collection API, we also propose the "allow-fallback" and "warn-fallback" subfields of "backend". When the "allow-fallback" field is set to `True` (default), then the backend's designated fallback class will be used to perform IO, and the result will be moved from the fallback backend. The user should also have the option to enable or disable warnings when this fallback behavior occurs:
 
 
 ```python
-options = {
+backend_options = {
+    "dataframe.backend.library": "cudf",
     # Allow user to specify if a fallback backend library
     # should be used, and if a warning should be raised when
     # this occurs:
-    "allow-fallback" : True,
-    "warn-fallback" : True,
+    "dataframe.backend.allow-fallback" : True,
+    "dataframe.backend.warn-fallback" : False,
 }
 
-dask.config.set({"dataframe.backend-options": options})
+dask.config.set(backend_options)
 ```
 
 The specific configuration options proposed here are certainly not set in stone.  However, we do feel that the user should have complete control over fallback behavior.  For example, the user should be able to specify if falling back to "numpy"/"pandas" should result in a warning or error message, or if it should be ignored altogether.
