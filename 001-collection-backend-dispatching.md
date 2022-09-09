@@ -79,13 +79,7 @@ backend_options = {
 dask.config.set(backend_options)
 ```
 
-The specific configuration options proposed here are certainly not set in stone.  However, we do feel that the user should have complete control over fallback behavior.  For example, the user should be able to specify if falling back to "numpy"/"pandas" should result in a warning or error message, or if it should be ignored altogether.
-
-
-**Notes on Fall-back Behavior**:
-
-- The proposed design requires every new backend-entrypoint definition (explained below) to define a `fallback` property. The entrypoint must also implement the necessary logic to **move** data from the dedicated fallback library.
-- It should be possible to support multiple fallback options within the external `DaskBackendEntrypoint.fallback` definition. It may make sense to add an official config option for this in Dask (e.g. `"dataframe.backend.fallback-library"`). However, it would need to be the responsibility of the external entrypoint definition to use and validate this field.
+The specific configuration options proposed here are certainly not set in stone.  However, we do feel that the user should have complete control over fallback behavior.  For example, the user should be able to specify if falling back to "numpy"/"pandas" should result in a warning or error message, or if it should be ignored altogether. [See notes on supporting **multiple** fallback options](#supporting-multiple-fallback-options).
 
 
 ### Registering a New Backend (`DaskBackendEntrypoint`)
@@ -123,7 +117,7 @@ class CudfBackendEntrypoint(DaskBackendEntrypoint):
 
 Once the `DaskBackendEntrypoint` subclass is defined, the new entrypoint can be declared in the library's `setup.py` file (specifying the class with a `"dask.backends"` entrypoint).
 
-Note that the `CudfBackendEntrypoint` example above selects `PandasBackendEntrypoint` as the fallback entrypoint class, but does not directly inherit from this reference class. This approach allows Dask to properly move data from the pandas fallback for any IO functions that lack cudf-specific definitions. If the cudf subclass were to directly inherit from `PandasBackendEntrypoint`, then "fallback" behavior would not result in data-movement or user warnings.
+Note that the `CudfBackendEntrypoint` example above selects `PandasBackendEntrypoint` as the fallback entrypoint class, but does not directly inherit from this reference class. This approach allows Dask to properly move data from the pandas fallback for any IO functions that lack cudf-specific definitions. If the cudf subclass were to directly inherit from `PandasBackendEntrypoint`, then "fallback" behavior would not result in data-movement or user warnings. [See notes on defining dispatchable IO functions](#defining-dispatchable-io-functions).
 
 
 ## Implementation Details
@@ -152,6 +146,7 @@ def read_parquet(*args, **kwargs):
 read_parquet.__doc__ = read_parquet_pandas.__doc__
 ```
 
+[See notes on moving backend-specific code](#moving-backend-specific-code), and [notes on dispatching docstrings](#dispatching-docstrings).
 
 
 ## Backward Compatibility
@@ -165,8 +160,43 @@ The primary alternative to the dispatch-based changes proposed here is to standa
 
 The alternative to the entry point-registration process proposed here is to follow the approach currently employed for `dask.utils.Dispatch`, where the user is expected to explicitly import the external code to ensure the alternative backend is properly registered. Otherwise, the backend definition would need to exist within the Dask source code itself.
 
+
 ## Discussion
 
-This section will be used to reference related discussion as it arises. Currently N/A.
+### Open Questions
+
+#### Supporting multiple fallback options
+
+**Relevant review comments**:
+
+- "Should the user be able to control what library they fallback to? I am imagining a future where you might want to fallback from sparse to either pandas or cudf." -jsignell
+
+**Notes**:
+
+- The proposed design requires every new backend-entrypoint definition to define a `fallback` property. The entrypoint must also implement the necessary logic to **move** data from the dedicated fallback library.
+- It should be possible to support multiple fallback options within the external `DaskBackendEntrypoint.fallback` definition. It may make sense to add an official config option for this in Dask (e.g. `"dataframe.backend.fallback-library"`). However, it would need to be the responsibility of the external entrypoint definition to use and validate this field.
 
 
+#### Defining dispatchable IO functions
+
+**Notes**:
+
+- The current design explicitly discourages the use of `NotImplementedError` in the interest of supporting seamless fallback behavior. Therefore, we cannot simply define all dispatchable functions at the `DaskBackendEntrypoint` level (or in collection-specific subclasses). This limitation means that the "dispatchable" functions will need to be advertised in the documentation.
+
+
+#### Moving backend-specific code
+
+**Notes**:
+
+- This proposal does not (yet) specify *where* Pandas- and Numpy-specific code should live. The current reference implementation defines these default implementations in place. However, there may be interest in re-organizing the collection codebase to be more explicit about library-specific code.
+
+
+#### Dispatching docstrings
+
+**Relevant review comments**:
+
+- "I'm interested in the docstrings. Often we inherit them from pandas and just augment them a bit, but maybe they should also be part of the dispatch mechanism." -jsignell
+
+**Notes**:
+
+- This proposal does not (yet) specify how doctrings should be defined for dispatchable functions.
