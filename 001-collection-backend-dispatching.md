@@ -48,7 +48,7 @@ Given the motivation for library and hardware agnostic collection APIs, this pro
 
 ### Designating the Backend (`dask.config`)
 
-From the perspective of the typical Dask user, the only visible result of the proposed feature is the addition of new fields in `dask/dask/dask.yaml`/`dask-schema.yaml` (accessible from `dask.config`). For each of the targeted collections (Dask-Array and Dask-DataFrame), we propose the addition of "backend", and "backend-options" fields. By default, the "backend" field will be set to "numpy" and "pandas" for Dask-Array and Dask-DataFrame, respectively. However, as shown in the code snippet below, this field can be changed with the existing `dask.config` interface to specify an alternative backend library.
+From the perspective of the typical Dask user, the only visible result of the proposed feature is the addition of a new field in `dask/dask/dask.yaml`/`dask-schema.yaml` (accessible from `dask.config`). For each of the targeted collections (Dask-Array and Dask-DataFrame), we propose the addition of the "backend.library" field. By default, "backend.library" will be set to "numpy" and "pandas" for Dask-Array and Dask-DataFrame, respectively. However, as shown in the code snippet below, this field can be changed with the existing `dask.config` interface to specify an alternative backend library.
 
 
 ```python
@@ -63,6 +63,7 @@ with dask.config.set({"array.backend.library": "cupy"}):
     darr = dask.array.ones(10, chunks=(5,))
 ```
 
+<!--
 Since it is unlikely that an alternative backend will support all numpy- or pandas-based data-creation functions available in the collection API, we also propose the "allow-fallback" and "warn-fallback" subfields of "backend". When the "allow-fallback" field is set to `True` (default), then the backend's designated fallback class will be used to perform IO, and the result will be moved from the fallback backend. The user should also have the option to enable or disable warnings when this fallback behavior occurs:
 
 
@@ -80,44 +81,49 @@ dask.config.set(backend_options)
 ```
 
 The specific configuration options proposed here are certainly not set in stone.  However, we do feel that the user should have complete control over fallback behavior.  For example, the user should be able to specify if falling back to "numpy"/"pandas" should result in a warning or error message, or if it should be ignored altogether. [See notes on supporting **multiple** fallback options](#supporting-multiple-fallback-options).
+-->
 
+### Registering a New Backend (`DaskBackendEntrypoint`)
 
-### Registering a New Backend (`DaskBackendIOEntrypoint`)
+In order to allow backend registration outside of the Dask source code, we propose that Dask approximately follow [the approach taken by xarray for custom backend interfaces](https://xarray.pydata.org/en/stable/internals/how-to-add-new-backend.html). That is, external libraries should be able to leverage "entrypoints" to tell Dask to register compatible backends in Dask-Array and Dask-DataFrame at run time. To this end, the external library could be expected to define all creation-dispatch logic within a `DaskDataFrameBackendEntrypoint` or `DaskArrayBackendEntrypoint` subclass.  The `__init__` method of the subclass would also be responsible for executing the necessary code to ensure that backend-specific (non-creation) dispatch functions are properly registered. For example, a cudf-based subclass would look something like the `CudfBackendEntrypoint` definition below:
 
-In order to allow backend registration outside of the Dask source code, we propose that Dask approximately follow [the approach taken by xarray for custom backend interfaces](https://xarray.pydata.org/en/stable/internals/how-to-add-new-backend.html). That is, external libraries should be able to leverage "entrypoints" to tell Dask to register compatible backends in Dask-Array and Dask-DataFrame at run time. To this end, the external library could be expected to define all dispatch IO logic within a `DaskBackendIOEntrypoint` subclass.  For example, a cudf-based subclass would look something like the `CudfIOEntrypoint` definition below:
 
 ```python
-class CudfIOEntrypoint(DaskBackendIOEntrypoint):
+class CudfBackendEntrypoint(DaskDataFrameBackendEntrypoint):
 
-    @cached_property
-    def fallback(self):
-        """Fallback entrypoint object to use for missing attributes
-
-        Returning anything other than ``None`` requires that
-        ``move_from_fallback`` be properly defined.
-        """
-        return PandasIOEntrypoint()
-
-    def move_from_fallback(self, ddf):
-        """Move a Dask collection from the fallback backend"""
-        if isinstance(ddf._meta, pd.DataFrame):
-            return ddf.map_partitions(cudf.DataFrame.from_pandas)
-        elif isinstance(ddf._meta, pd.Series):
-            return ddf.map_partitions(cudf.Series.from_pandas)
-        return ddf
+    def __init__(self):
+        # Importing this class will guarentee that compute
+        # dispatch functions (e.g. `make_meta_dispatch`)
+        # are registered, because they are defined and
+        # registered in the same module.
+        pass
     ...
 
     def read_json(self, *args, engine=None, **kwargs):
-        return self.fallback.read_json(*args, engine=cudf.read_json, **kwargs)
+        # Use "pandas" backend with cudf-based engine
+        with config.set({"dataframe.backend.library": "pandas"}):
+            return dd.read_json(
+                *args, engine=cudf.read_json, **kwargs
+            )
 
     def read_orc(self, *args, **kwargs):
-        return dask_cudf.read_orc(*args, **kwargs)
+        from .io import read_orc
+
+        # Use dask_cudf version of read_orc
+        return read_orc(*args, **kwargs)
     ...
 ```
 
-Once the `DaskBackendIOEntrypoint` subclass is defined, the new entrypoint can be declared in the library's `setup.py` file (specifying the class with a `"dask.backends"` entrypoint).
+Once the `DaskBackendEntrypoint` subclass is defined, the new entrypoint can be declared in the library's `setup.py` file (specifying the class with a `"dask.backends"` entrypoint).
 
-Note that the `CudfIOEntrypoint` example above selects `PandasIOEntrypoint` as the fallback entrypoint class, but does not directly inherit from this reference class. This approach allows Dask to properly move data from the pandas fallback for any IO functions that lack cudf-specific definitions. If the cudf subclass were to directly inherit from `PandasIOEntrypoint`, then "fallback" behavior would not result in data-movement or user warnings. [See notes on defining dispatchable IO functions](#defining-dispatchable-io-functions).
+Note that the `CudfBackendEntrypoint` example above does not inherit from `PandasBackendEntrypoint`, even though it does **manually** leverage the "pandas" backend for some creation operations. This approach ensures that Dask will raise a `NotImplementedError` for any dispatchable creation function that is not explicitly defined for the "cudf" entrypoint. The next section will discuss where the set of all "dispatchable" functions are defined. 
+
+
+### Defining dispatchable creation functions
+
+The set of all dispatchable creation functions for Dask-DataFrame and Dask-Array should be defined in `DaskDataFrameBackendEntrypoint` and `DaskArrayBackendEntrypoint`, respectively. Whithin these base classes, the creation functions will be abstract in the sense that they will define the required argument signature, but will return `NotImplementedError`.  These creation functions should also be advertised within the dask-Dataframe and Dask-Array documentation, along-side an (advanced) tutorial on defining a custom collection backend.
+
+**NOTE**: Although this work should make it easier for users to define custom collection backends, the data-centered dispatch system (used at compute time) will likley need further standardization before custom backed definitions are practical in general. There may also be some necessary work to revise internal Dask code that currently uses parts of the panda/numpy API that are outside the DataFrame/Array-API standards.
 
 
 ## Implementation Details
@@ -129,24 +135,21 @@ Note that the `CudfIOEntrypoint` example above selects `PandasIOEntrypoint` as t
 
 ### Dispatching Functions
 
-As described above, we propose that all IO functions for a specific backend be defined within a single `DaskBackendIOEntrypoint` subclass. The only subclasses defined within the dask source code will be the default reference subclasses for numpy and pandas. These entrypoint classes will be defined in the `backends.py` file for each collection, and will define all dispatch-able IO functions.
-
-The actual dispatching of IO functions will require the definition of a new `BackendIODispatch` class in `dask.utils`. In contrast to the existing `dask.utils.Dispatch` class, `BackendIODispatch` will use a backend string label (e.g. "pandas") for registration and dispatching, and the dispatching logic will be implemented at the `__getattr__` level (rather than in `__call__`). More specifically, registered "keys" and "values" for the dispatch class will correspond to backend labels and `DaskBackendIOEntrypoint` subclasses, respectively. When some Dask-collection code calls something like `backend_dispatch.read_parquet`, dispatching logic will be used to return the appropriate `"read_parquet"` attribute for the current backend.
-
-In order to avoid moving numpy- or pandas-specific IO logic into `backends.py`, the existing IO functions will  be renamed to `*_pandas`, and referenced "in place". To insure that the real IO functions are still defined at the same absolute and relative paths, and that the original doc-strings are recognized, we can add a few lines below the `*_pandas` definition to direct the original function name to the dispatching machinery:
+As described above, we propose that all creation functions for a specific backend be defined within a single `DaskDataFrameBackendEntrypoint` or `DaskArrayBackendEntrypoint` subclass. The only subclasses defined within the dask source code will be the default reference subclasses for numpy, cupy and pandas. These entrypoint classes will be defined in the `backends.py` file for each collection. In order to avoid moving all numpy- and pandas-specific creation logic into `backends.py`, the existing creation functions will be registered to their respective entrypoint class "in place":
 
 
 ```python
-def read_parquet_pandas(...):
-    <Previous read_parquet definition and doc-string>
+from dask.dataframe.backends import dataframe_creation_dispatch
+...
 
+@dataframe_creation_dispatch.register_inplace("pandas")
 def read_parquet(*args, **kwargs):
-    return dataframe_backend_dispatch.read_parquet(*args, **kwargs)
-
-read_parquet.__doc__ = read_parquet_pandas.__doc__
+    ...
 ```
 
 [See notes on moving backend-specific code](#moving-backend-specific-code), and [notes on dispatching docstrings](#dispatching-docstrings).
+
+The actual dispatching of creation functions will require the definition of a new `BackendDispatch` class in a new `dask.backends` module (where `DaskBackendEntrypoint` will also be defined). In contrast to the existing `dask.utils.Dispatch` class, `BackendDispatch` will use a backend string label (e.g. "pandas") for registration and dispatching, and the dispatching logic will be implemented at the `__getattr__` level (rather than in `__call__`). More specifically, registered "keys" and "values" for the dispatch class will correspond to backend labels and `DaskBackendEntrypoint` subclasses, respectively. When some Dask-collection code calls something like `backend_dispatch.read_parquet`, dispatching logic will be used to return the appropriate `"read_parquet"` attribute for the current backend.
 
 
 ## Backward Compatibility
@@ -156,33 +159,18 @@ The default backend libraries for `dask.array` and `dask.dataframe` will continu
 
 ## Alternatives
 
-The primary alternative to the dispatch-based changes proposed here is to standardize the `engine=` argument for all input-IO functions in the Array and DataFrame collection APIs.  The defaults for this `engine` arguments could depend on one or more fields in `dask.config`, but the logic for selecting/using the desired backend would need to be added to every IO function.  There are already a few Dask-DataFrame IO functions (e.g. `read_parquet`, `read_json`) that leverage an `engine` keyword to  effectively utilize different library backends for IO.  However, the specific usage of `engine=` is inconsistent between the various IO functions, and does **not** necessarily correspond to the use of a distinct dataframe (or array) backend library.  In fact, the “pandas” backend already supports multiple engine options in `read_parquet`, and so the concept of an “engine” is already a bit different from that of a DataFrame “backend”.  Therefore, it may be a significant challenge to design a general mapping between `engine` options and registered backends.
+The primary alternative to the dispatch-based changes proposed here is to standardize the `engine=` argument for all creation functions in the Array and DataFrame collection APIs.  The defaults for this `engine` arguments could depend on one or more fields in `dask.config`, but the logic for selecting/using the desired backend would need to be added to every creation function.  There are already a few Dask-DataFrame creation functions (e.g. `read_parquet`, `read_json`) that leverage an `engine` keyword to  effectively utilize different library backends for creation.  However, the specific usage of `engine=` is inconsistent between the various creation functions, and does **not** necessarily correspond to the use of a distinct dataframe (or array) backend library.  In fact, the “pandas” backend already supports multiple engine options in `read_parquet`, and so the concept of an “engine” is already a bit different from that of a DataFrame “backend”.  Therefore, it may be a significant challenge to design a general mapping between `engine` options and registered backends.
 
 The alternative to the entry point-registration process proposed here is to follow the approach currently employed for `dask.utils.Dispatch`, where the user is expected to explicitly import the external code to ensure the alternative backend is properly registered. Otherwise, the backend definition would need to exist within the Dask source code itself.
 
 
 ## Discussion
 
+### Revision Notes
+
+- September 13, 2022: Automated library-fallback behavior has been removed from the proposal. It is now the responsibility of the backed to implement and document fallback behavior if/when desired.
+
 ### Open Questions
-
-#### Supporting multiple fallback options
-
-**Relevant review comments**:
-
-- "Should the user be able to control what library they fallback to? I am imagining a future where you might want to fallback from sparse to either pandas or cudf." -jsignell
-
-**Notes**:
-
-- The proposed design requires every new backend-entrypoint definition to define a `fallback` property. The entrypoint must also implement the necessary logic to **move** data from the dedicated fallback library.
-- It should be possible to support multiple fallback options within the external `DaskBackendIOEntrypoint.fallback` definition. It may make sense to add an official config option for this in Dask (e.g. `"dataframe.backend.fallback-library"`). However, it would need to be the responsibility of the external entrypoint definition to use and validate this field.
-
-
-#### Defining dispatchable IO functions
-
-**Notes**:
-
-- The current design explicitly discourages the use of `NotImplementedError` in the interest of supporting seamless fallback behavior. Therefore, we cannot simply define all dispatchable functions at the `DaskBackendIOEntrypoint` level (or in collection-specific subclasses). This limitation means that the "dispatchable" functions will need to be advertised in the documentation.
-
 
 #### Moving backend-specific code
 
