@@ -63,26 +63,6 @@ with dask.config.set({"array.backend.library": "cupy"}):
     darr = dask.array.ones(10, chunks=(5,))
 ```
 
-<!--
-Since it is unlikely that an alternative backend will support all numpy- or pandas-based data-creation functions available in the collection API, we also propose the "allow-fallback" and "warn-fallback" subfields of "backend". When the "allow-fallback" field is set to `True` (default), then the backend's designated fallback class will be used to perform IO, and the result will be moved from the fallback backend. The user should also have the option to enable or disable warnings when this fallback behavior occurs:
-
-
-```python
-backend_options = {
-    "dataframe.backend.library": "cudf",
-    # Allow user to specify if a fallback backend library
-    # should be used, and if a warning should be raised when
-    # this occurs:
-    "dataframe.backend.allow-fallback" : True,
-    "dataframe.backend.warn-fallback" : False,
-}
-
-dask.config.set(backend_options)
-```
-
-The specific configuration options proposed here are certainly not set in stone.  However, we do feel that the user should have complete control over fallback behavior.  For example, the user should be able to specify if falling back to "numpy"/"pandas" should result in a warning or error message, or if it should be ignored altogether. [See notes on supporting **multiple** fallback options](#supporting-multiple-fallback-options).
--->
-
 ### Registering a New Backend (`DaskBackendEntrypoint`)
 
 In order to allow backend registration outside of the Dask source code, we propose that Dask approximately follow [the approach taken by xarray for custom backend interfaces](https://xarray.pydata.org/en/stable/internals/how-to-add-new-backend.html). That is, external libraries should be able to leverage "entrypoints" to tell Dask to register compatible backends in Dask-Array and Dask-DataFrame at run time. To this end, the external library could be expected to define all creation-dispatch logic within a `DaskDataFrameBackendEntrypoint` or `DaskArrayBackendEntrypoint` subclass.  The `__init__` method of the subclass would also be responsible for executing the necessary code to ensure that backend-specific (non-creation) dispatch functions are properly registered. For example, a cudf-based subclass would look something like the `CudfBackendEntrypoint` definition below:
