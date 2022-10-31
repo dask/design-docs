@@ -65,19 +65,11 @@ with dask.config.set({"array.backend.library": "cupy"}):
 
 ### Registering a New Backend (`DaskBackendEntrypoint`)
 
-In order to allow backend registration outside of the Dask source code, we propose that Dask approximately follow [the approach taken by xarray for custom backend interfaces](https://xarray.pydata.org/en/stable/internals/how-to-add-new-backend.html). That is, external libraries should be able to leverage "entrypoints" to tell Dask to register compatible backends in Dask-Array and Dask-DataFrame at run time. To this end, the external library could be expected to define all creation-dispatch logic within a `DaskDataFrameBackendEntrypoint` or `DaskArrayBackendEntrypoint` subclass.  The `__init__` method of the subclass would also be responsible for executing the necessary code to ensure that backend-specific (non-creation) dispatch functions are properly registered. For example, a cudf-based subclass would look something like the `CudfBackendEntrypoint` definition below:
+In order to allow backend registration outside of the Dask source code, we propose that Dask approximately follow [the approach taken by xarray for custom backend interfaces](https://xarray.pydata.org/en/stable/internals/how-to-add-new-backend.html). That is, external libraries should be able to leverage "entrypoints" to tell Dask to register compatible backends in Dask-Array and Dask-DataFrame at run time. To this end, the external library could be expected to define all creation-dispatch logic within a `DataFrameBackendEntrypoint` or `ArrayBackendEntrypoint` subclass.  The `__init__` method of the subclass would also be responsible for executing the necessary code to ensure that backend-specific (non-creation) dispatch functions are properly registered. For example, a cudf-based subclass would look something like the `CudfBackendEntrypoint` definition below:
 
 
 ```python
-class CudfBackendEntrypoint(DaskDataFrameBackendEntrypoint):
-
-    def __init__(self):
-        # Importing this class will guarentee that compute
-        # dispatch functions (e.g. `make_meta_dispatch`)
-        # are registered, because they are defined and
-        # registered in the same module.
-        pass
-    ...
+class CudfBackendEntrypoint(DataFrameBackendEntrypoint):
 
     def read_json(self, *args, engine=None, **kwargs):
         # Use "pandas" backend with cudf-based engine
@@ -101,21 +93,21 @@ Note that the `CudfBackendEntrypoint` example above does not inherit from `Panda
 
 ### Defining dispatchable creation functions
 
-The set of all dispatchable creation functions for Dask-DataFrame and Dask-Array should be defined in `DaskDataFrameBackendEntrypoint` and `DaskArrayBackendEntrypoint`, respectively. Whithin these base classes, the creation functions will be abstract in the sense that they will define the required argument signature, but will return `NotImplementedError`.  These creation functions should also be advertised within the dask-Dataframe and Dask-Array documentation, along-side an (advanced) tutorial on defining a custom collection backend.
+The set of all dispatchable creation functions for Dask-DataFrame and Dask-Array should be defined in `DataFrameBackendEntrypoint` and `ArrayBackendEntrypoint`, respectively. Whithin these base classes, the creation functions will be abstract in the sense that they will define the expected argument signature, but will return `NotImplementedError`.  These creation functions should also be advertised within the dask-Dataframe and Dask-Array documentation, along-side an (advanced) tutorial on defining a custom collection backend.
 
-**NOTE**: Although this work should make it easier for users to define custom collection backends, the data-centered dispatch system (used at compute time) will likley need further standardization before custom backed definitions are practical in general. There may also be some necessary work to revise internal Dask code that currently uses parts of the panda/numpy API that are outside the DataFrame/Array-API standards.
+**NOTE**: Although this work should make it easier for users to define custom collection backends, the data-centered dispatch system (used at compute time) will likley need further standardization before custom backed definitions are practical in general. There may also be some necessary work to revise internal Dask code that currently uses parts of the pandas/numpy API that are outside the DataFrame/Array-API standards.
 
 
 ## Implementation Details
 
-**Reference Implementation** (Draft):
+**Reference Implementation**:
 
-- [Dask Component](https://github.com/rjzamora/dask/tree/backend-class) 
-- [CuDF Component](https://github.com/rjzamora/cudf/tree/backend-class) ("cudf" entrypoint definition in `dask_cudf`)
+- [Dask Component](https://github.com/dask/dask/pull/9475) 
+- [CuDF Component](https://github.com/rapidsai/cudf/pull/11920) ("cudf" entrypoint definition in `dask_cudf`)
 
 ### Dispatching Functions
 
-As described above, we propose that all creation functions for a specific backend be defined within a single `DaskDataFrameBackendEntrypoint` or `DaskArrayBackendEntrypoint` subclass. The only subclasses defined within the dask source code will be the default reference subclasses for numpy, cupy and pandas. These entrypoint classes will be defined in the `backends.py` file for each collection. In order to avoid moving all numpy- and pandas-specific creation logic into `backends.py`, the existing creation functions will be registered to their respective entrypoint class "in place":
+As described above, we propose that all creation functions for a specific backend be defined within a single `DataFrameBackendEntrypoint` or `ArrayBackendEntrypoint` subclass. The only subclasses defined within the dask source code will be the default reference subclasses for numpy, cupy and pandas. These entrypoint classes will be defined in the `backends.py` file for each collection. In order to avoid moving all numpy- and pandas-specific creation logic into `backends.py`, the existing creation functions will be registered to their respective entrypoint class "in place":
 
 
 ```python
@@ -129,7 +121,7 @@ def read_parquet(*args, **kwargs):
 
 [See notes on moving backend-specific code](#moving-backend-specific-code), and [notes on dispatching docstrings](#dispatching-docstrings).
 
-The actual dispatching of creation functions will require the definition of a new `BackendDispatch` class in a new `dask.backends` module (where `DaskBackendEntrypoint` will also be defined). In contrast to the existing `dask.utils.Dispatch` class, `BackendDispatch` will use a backend string label (e.g. "pandas") for registration and dispatching, and the dispatching logic will be implemented at the `__getattr__` level (rather than in `__call__`). More specifically, registered "keys" and "values" for the dispatch class will correspond to backend labels and `DaskBackendEntrypoint` subclasses, respectively. When some Dask-collection code calls something like `backend_dispatch.read_parquet`, dispatching logic will be used to return the appropriate `"read_parquet"` attribute for the current backend.
+The actual dispatching of creation functions will require the definition of a new `CreationDispatch` class in a new `dask.backends` module (where `DaskBackendEntrypoint` will also be defined). In contrast to the existing `dask.utils.Dispatch` class, `CreationDispatch` will use a backend string label (e.g. "pandas") for registration and dispatching, and the dispatching logic will be implemented at the `__getattr__` level (rather than in `__call__`). More specifically, registered "keys" and "values" for the dispatch class will correspond to backend labels and `DaskBackendEntrypoint` subclasses, respectively. When some Dask-collection code calls something like `dataframe_creation_dispatch.read_parquet`, dispatching logic will be used to return the appropriate `"read_parquet"` attribute for the current backend.
 
 
 ## Backward Compatibility
